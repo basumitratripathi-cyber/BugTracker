@@ -9,6 +9,12 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const { Server } = require("socket.io");
+const path = require("path");
+app.use(express.static(path.join(__dirname, "frontend")));
+
+app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "frontend", "index.html"));
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -355,3 +361,4 @@ io.on("connection", (socket) => {
 // ----------------- START SERVER -----------------
 
 server.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+
