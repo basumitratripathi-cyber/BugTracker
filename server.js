@@ -14,6 +14,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
+const path = require("path");
+app.use(express.static(path.join(__dirname, "frontend")));
+
+app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "frontend", "index.html"));
+});
+
+
 app.use(cors());
 app.use(bodyParser.json());
 
@@ -325,3 +333,4 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);
 });
+
