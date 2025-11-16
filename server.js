@@ -17,6 +17,13 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(bodyParser.json());
 
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log("Server running on " + PORT);
+});
+
+
 // Basic environment fallbacks and warnings to make local development easier.
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 if (!process.env.JWT_SECRET) console.warn("Warning: JWT_SECRET not set — using insecure default for development.");
@@ -355,3 +362,4 @@ io.on("connection", (socket) => {
 // ----------------- START SERVER -----------------
 
 server.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+
