@@ -360,5 +360,18 @@ io.on("connection", (socket) => {
 
 // ----------------- START SERVER -----------------
 
-server.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
 
+const path = require("path");
+
+// Serve static frontend files
+app.use(express.static(path.join(__dirname, "frontend")));
+
+// Fallback: send index.html for any unknown route
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "index.html"));
+});
+
+// Start server
+server.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
+});
