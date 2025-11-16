@@ -17,19 +17,12 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(bodyParser.json());
 
+// single PORT declaration (use Render's injected PORT when available)
 const PORT = process.env.PORT || 4000;
-
-app.listen(PORT, () => {
-  console.log("Server running on " + PORT);
-});
-
 
 // Basic environment fallbacks and warnings to make local development easier.
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 if (!process.env.JWT_SECRET) console.warn("Warning: JWT_SECRET not set — using insecure default for development.");
-
-const PORT = process.env.PORT || 4000;
-if (!process.env.PORT) console.info(`PORT not set, using default ${PORT}`);
 
 const MONGO_URI_RAW = process.env.MONGO_URI;
 let MONGO_URI = MONGO_URI_RAW || "mongodb://localhost:27017/bugtrack";
@@ -41,14 +34,12 @@ if (!MONGO_URI_RAW) {
 }
 
 // ----------------- DATABASE -----------------
-
 mongoose
   .connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.log("Mongo Error:", err));
 
 // ----------------- MODELS -----------------
-
 const UserSchema = new mongoose.Schema({
   name: String,
   email: String,
@@ -72,14 +63,12 @@ const BugSchema = new mongoose.Schema({
   project_id: String,
   reporter_id: String,
   assignee_id: String,
-  // resolution fields to store fix notes when a bug is closed
   resolution: { type: String, default: '' },
   resolved_by: { type: String, default: null },
   resolved_at: { type: Date, default: null },
 });
 const Bug = mongoose.model("Bug", BugSchema);
 
-// Resolution history for audit (who resolved and when)
 const ResolutionSchema = new mongoose.Schema({
   bug_id: String,
   resolved_by: String,
@@ -96,7 +85,6 @@ const NotificationSchema = new mongoose.Schema({
 const Notification = mongoose.model("Notification", NotificationSchema);
 
 // ----------------- AUTH MIDDLEWARE -----------------
-
 function auth(req, res, next) {
   const h = req.headers.authorization;
   if (!h) return res.json({ error: "Missing token" });
@@ -110,7 +98,6 @@ function auth(req, res, next) {
 }
 
 // ----------------- AUTH ROUTES -----------------
-
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body;
 
@@ -139,14 +126,12 @@ app.post("/api/auth/login", async (req, res) => {
 });
 
 // ----------------- USERS -----------------
-
 app.get("/api/users", auth, async (req, res) => {
   const users = await User.find();
   res.json(users);
 });
 
 // ----------------- PROJECTS -----------------
-
 app.post("/api/projects", auth, async (req, res) => {
   const p = await Project.create({
     name: req.body.name,
@@ -162,7 +147,6 @@ app.get("/api/projects", auth, async (req, res) => {
 });
 
 // ----------------- BUGS -----------------
-
 app.post("/api/bugs", auth, async (req, res) => {
   const bug = await Bug.create({
     title: req.body.title,
@@ -173,7 +157,6 @@ app.post("/api/bugs", auth, async (req, res) => {
     assignee_id: req.body.assignee_id,
   });
 
-  // Create notification
   if (req.body.assignee_id) {
     await Notification.create({
       user_id: req.body.assignee_id,
@@ -194,10 +177,8 @@ app.get("/api/bugs", auth, async (req, res) => {
 });
 
 app.put("/api/bugs/:id", auth, async (req, res) => {
-  // Update bug document with supplied fields
   await Bug.findByIdAndUpdate(req.params.id, req.body);
 
-  // If the change includes a resolution and status closed, persist an audit entry
   try {
     if (req.body.status === 'closed' && req.body.resolution) {
       await Resolution.create({
@@ -211,12 +192,8 @@ app.put("/api/bugs/:id", auth, async (req, res) => {
     console.warn('Failed to create resolution audit record', e && e.message);
   }
 
-  // After update, emit a lightweight analytics update to connected clients
   try {
-    // total resolved count
     const totalResolved = await Resolution.countDocuments();
-
-    // average resolution time (ms): join resolutions with bugs where bug.resolved_at exists
     const agg = await Resolution.aggregate([
       { $lookup: { from: 'bugs', localField: 'bug_id', foreignField: '_id', as: 'bug' } },
       { $unwind: '$bug' },
@@ -225,38 +202,29 @@ app.put("/api/bugs/:id", auth, async (req, res) => {
     ]);
     const avgMs = (agg && agg[0] && agg[0].avgMs) ? Math.round(agg[0].avgMs) : 0;
 
-    // top solvers (by count)
     const top = await Resolution.aggregate([
       { $group: { _id: '$resolved_by', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 6 }
     ]);
-    // resolve user ids to names where possible
     const topSolvers = await Promise.all(top.map(async t => {
-      const u = await User.findById(t._id).select('name').lean();
+      const u = await User.findById(t._1).select('name').lean().catch(()=>null);
       return { name: (u && u.name) ? u.name : (t._id || 'Unknown'), count: t.count };
     }));
 
-    // compute total resolved by this user (who performed the update)
     let totalResolvedBy = 0;
     try { totalResolvedBy = await Resolution.countDocuments({ resolved_by: req.user.id }); } catch(e) { totalResolvedBy = 0; }
 
     const payload = { solved: 1, totalResolved, totalResolvedBy, resolvedByUserId: req.user.id, avgResolutionMs: avgMs, topSolvers, timestamp: Date.now() };
-    // include priority counts (high/medium/low)
+
     try {
       const high = await Bug.countDocuments({ priority: 'high' });
       const medium = await Bug.countDocuments({ priority: 'medium' });
       const low = await Bug.countDocuments({ priority: 'low' });
       payload.priorityCounts = { high, medium, low };
-      // also include per-user priority counts (closed by this user)
-      try {
-        const userHigh = await Resolution.countDocuments({ resolved_by: req.user.id, bug_id: { $exists: true } });
-        // Note: to compute per-priority resolved-by-user we'd need to join Resolutions and Bugs; provide a best-effort simple count of user's resolved entries
-        payload.totalResolvedBy = totalResolvedBy;
-      } catch (e2) {
-        // ignore
-      }
+      payload.totalResolvedBy = totalResolvedBy;
     } catch(e) { payload.priorityCounts = { high:0, medium:0, low:0 }; }
+
     io.emit('analysis', payload);
   } catch (e) {
     console.warn('Failed to compute/emit analytics', e && e.message);
@@ -286,12 +254,10 @@ app.get('/api/analytics/summary', auth, async (req, res) => {
       return { name: (u && u.name) ? u.name : (t._id || 'Unknown'), count: t.count };
     }));
 
-    // also include priorityCounts for initial summary
     try {
       const high = await Bug.countDocuments({ priority: 'high' });
       const medium = await Bug.countDocuments({ priority: 'medium' });
       const low = await Bug.countDocuments({ priority: 'low' });
-      // compute total resolved by requesting user
       try {
         const totalResolvedByReqUser = await Resolution.countDocuments({ resolved_by: req.user.id });
         res.json({ totalResolved, totalResolvedBy: totalResolvedByReqUser, avgResolutionMs: avgMs, topSolvers, priorityCounts: { high, medium, low } });
@@ -305,7 +271,6 @@ app.get('/api/analytics/summary', auth, async (req, res) => {
     res.json({ error: 'Failed to compute analytics' });
   }
 });
-
 
 // Create a resolution entry for a bug (separate audit endpoint)
 app.post('/api/bugs/:id/resolutions', auth, async (req, res) => {
@@ -326,14 +291,12 @@ app.delete("/api/bugs/:id", auth, async (req, res) => {
 });
 
 // ----------------- NOTIFICATIONS -----------------
-
 app.get("/api/notifications", auth, async (req, res) => {
   const notes = await Notification.find({ user_id: req.user.id });
   res.json(notes);
 });
 
 // ----------------- REPORTS -----------------
-
 app.get("/api/reports/summary", auth, async (req, res) => {
   const total = await Bug.countDocuments();
   const open = await Bug.countDocuments({ status: "open" });
@@ -352,7 +315,6 @@ app.get("/api/reports/summary", auth, async (req, res) => {
 });
 
 // ----------------- SOCKET -----------------
-
 io.on("connection", (socket) => {
   socket.on("identify", ({ userId }) => {
     socket.join(`user_${userId}`);
@@ -360,7 +322,6 @@ io.on("connection", (socket) => {
 });
 
 // ----------------- START SERVER -----------------
-
-server.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
-
-
+server.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
+});
